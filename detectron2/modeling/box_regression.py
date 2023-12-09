@@ -307,7 +307,7 @@ class Box2BoxTransformLinear:
         return pred_boxes
 
 
-def _dense_box_regression_loss(
+def _dense_box_regression_loss( #TODO: handhp1 여기에 occlusion 적용할 필요는 없나?
     anchors: List[Union[Boxes, torch.Tensor]],
     box2box_transform: Box2BoxTransform,
     pred_anchor_deltas: List[torch.Tensor],
