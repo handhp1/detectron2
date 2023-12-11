@@ -308,6 +308,11 @@ class ProposalNetwork(nn.Module):
         """
         images = [self._move_to_current_device(x["image"]) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+
+        gradcam = [self._move_to_current_device(x["gradcam"]) for x in batched_inputs]
+        for i in range(len(images)):       
+            images[i] = gradcam[i]*images[i]
+
         images = ImageList.from_tensors(
             images,
             self.backbone.size_divisibility,

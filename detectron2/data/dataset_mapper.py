@@ -168,7 +168,21 @@ class DatasetMapper:
         # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
+        if 'train' in dataset_dict["file_name"] :
+            gradcam_folder = 'datasets/coco/test_train2017_gradcam/'
+        elif 'val' in dataset_dict["file_name"]:
+            gradcam_folder = 'datasets/coco/test_val2017_gradcam/'
+         
+
+        gradcam_file = dataset_dict["file_name"].split('/')[-1].split('.')[-2] + '.npy'
+        gradcam = np.load(gradcam_folder + gradcam_file)
+
+        gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
+        gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
+
+        dataset_dict["gradcam"] = gradcam
         dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        
         if sem_seg_gt is not None:
             dataset_dict["sem_seg"] = torch.as_tensor(sem_seg_gt.astype("long"))
 

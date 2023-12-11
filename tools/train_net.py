@@ -125,17 +125,39 @@ def main(args):
     cfg = setup(args)
 
     if args.eval_only:
-        model = Trainer.build_model(cfg)
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-            cfg.MODEL.WEIGHTS, resume=args.resume
-        )
-        res = Trainer.test(cfg, model)
-        if cfg.TEST.AUG.ENABLED:
-            res.update(Trainer.test_with_TTA(cfg, model))
-        if comm.is_main_process():
-            verify_results(cfg, res)
+        if os.path.isdir(cfg.MODEL.WEIGHTS) :
+            print("path : ", cfg.MODEL.WEIGHTS)
+            model_files = glob.glob(cfg.MODEL.WEIGHTS + '*.pth')
+            print("model_files : ", model_files)
+            f = open('write.csv','w', newline='')
+            wr = csv.writer(f)
+            first_row = ['','AP', 'AP50','AP75','APs', 'APm','APl']
+            wr.writerow(first_row)
+            for i in range(len(model_files)):
+                #cfg.MODEL.WEIGHTS = model_files[i]
+                model = Trainer.build_model(cfg)
+                DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+                    model_files[i], resume=args.resume
+                )
+                res = Trainer.test(cfg, model, writer=wr, model_file = model_files[i])
+                if cfg.TEST.AUG.ENABLED:
+                    print("cfg.TEST.AUG.ENABLED:")
+                    res.update(Trainer.test_with_TTA(cfg, model))
+                if comm.is_main_process():
+                    print("verify_results")
+                    verify_results(cfg, res)
+            f.close()
+        else :
+            model = Trainer.build_model(cfg)
+            DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+                cfg.MODEL.WEIGHTS, resume=args.resume
+            )
+            res = Trainer.test(cfg, model)
+            if cfg.TEST.AUG.ENABLED:
+                res.update(Trainer.test_with_TTA(cfg, model))
+            if comm.is_main_process():
+                verify_results(cfg, res)
         return res
-
     """
     If you'd like to do anything fancier than the standard training logic,
     consider writing your own training loop (see plain_train_net.py) or
