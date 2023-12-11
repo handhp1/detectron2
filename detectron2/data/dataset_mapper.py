@@ -141,7 +141,7 @@ class DatasetMapper:
             instances.gt_boxes = instances.gt_masks.get_bounding_boxes() # 최종적으로 여기서 gt_boxes를 계산한 다음에 occ_boxes를 계산해야 한다
         
         # calculate intersections between boxes for occ_boxes
-        instances.occ_boxes = utils.calc_occ_boxes(instances.gt_boxes) # occ_boxes 계산
+        instances.gt_occ_boxes = utils.calc_occ_boxes(instances.gt_boxes) # occ_boxes 계산
 
         dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
