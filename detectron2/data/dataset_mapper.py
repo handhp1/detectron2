@@ -10,6 +10,8 @@ from detectron2.config import configurable
 from . import detection_utils as utils
 from . import transforms as T
 
+from skimage.transform import resize
+
 """
 This file contains the default mapping that's applied to "dataset dicts".
 """
