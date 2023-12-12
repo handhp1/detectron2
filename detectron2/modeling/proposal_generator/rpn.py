@@ -116,6 +116,8 @@ class StandardRPNHead(nn.Module):
         self.objectness_logits = nn.Conv2d(cur_channels, num_anchors, kernel_size=1, stride=1)
         # 1x1 conv for predicting box2box transform deltas
         self.anchor_deltas = nn.Conv2d(cur_channels, num_anchors * box_dim, kernel_size=1, stride=1)
+        # 1x1 conv for predicting occlusioness logits
+        self.occlusioness_logits = nn.Conv2d(cur_channels, num_anchors, kernel_size=1, stride=1)
 
         # Keeping the order of weights initialization same for backwards compatiblility.
         for layer in self.modules():
@@ -170,11 +172,13 @@ class StandardRPNHead(nn.Module):
         """
         pred_objectness_logits = []
         pred_anchor_deltas = []
+        pred_occlusioness_logits = []
         for x in features:
             t = self.conv(x)
             pred_objectness_logits.append(self.objectness_logits(t))
             pred_anchor_deltas.append(self.anchor_deltas(t))
-        return pred_objectness_logits, pred_anchor_deltas
+            pred_occlusioness_logits.append(self.occlusioness_logits(t))
+        return pred_objectness_logits, pred_anchor_deltas, pred_occlusioness_logits
 
 
 @PROPOSAL_GENERATOR_REGISTRY.register()
@@ -231,6 +235,7 @@ class RPN(nn.Module):
                 all rpn losses together, or a dict of individual weightings. Valid dict keys are:
                     "loss_rpn_cls" - applied to classification loss
                     "loss_rpn_loc" - applied to box regression loss
+                    "loss_rpn_occ" - applied to box occlusion loss
             box_reg_loss_type (str): Loss type to use. Supported losses: "smooth_l1", "giou".
             smooth_l1_beta (float): beta parameter for the smooth L1 regression loss. Default to
                 use L1 loss. Only used when `box_reg_loss_type` is "smooth_l1"
@@ -250,7 +255,7 @@ class RPN(nn.Module):
         self.min_box_size = float(min_box_size)
         self.anchor_boundary_thresh = anchor_boundary_thresh
         if isinstance(loss_weight, float):
-            loss_weight = {"loss_rpn_cls": loss_weight, "loss_rpn_loc": loss_weight}
+            loss_weight = {"loss_rpn_cls": loss_weight, "loss_rpn_loc": loss_weight, "loss_rpn_occ": loss_weight}
         self.loss_weight = loss_weight
         self.box_reg_loss_type = box_reg_loss_type
         self.smooth_l1_beta = smooth_l1_beta
@@ -267,6 +272,7 @@ class RPN(nn.Module):
             "loss_weight": {
                 "loss_rpn_cls": cfg.MODEL.RPN.LOSS_WEIGHT,
                 "loss_rpn_loc": cfg.MODEL.RPN.BBOX_REG_LOSS_WEIGHT * cfg.MODEL.RPN.LOSS_WEIGHT,
+                "loss_rpn_occ": cfg.MODEL.RPN.LOSS_WEIGHT,
             },
             "anchor_boundary_thresh": cfg.MODEL.RPN.BOUNDARY_THRESH,
             "box2box_transform": Box2BoxTransform(weights=cfg.MODEL.RPN.BBOX_REG_WEIGHTS),
@@ -304,9 +310,9 @@ class RPN(nn.Module):
 
     @torch.jit.unused
     @torch.no_grad()
-    def label_and_sample_anchors(
+    def label_and_sample_anchors( # TODO: handhp1
         self, anchors: List[Boxes], gt_instances: List[Instances]
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         """
         Args:
             anchors (list[Boxes]): anchors for each feature map.
@@ -321,16 +327,23 @@ class RPN(nn.Module):
             list[Tensor]:
                 i-th element is a Rx4 tensor. The values are the matched gt boxes for each
                 anchor. Values are undefined for those anchors not labeled as 1.
+            list[Tensor]:
+                List of #img tensors. i-th element is a vector of labels whose length is
+                the total number of anchors across all feature maps R = sum(Hi * Wi * A).
+                Label values are in {-1, 0, 1}, with meanings: -1 = ignore; 0 = negative
+                class; 1 = positive class. # negative is not occluded, positive is occluded
         """
         anchors = Boxes.cat(anchors)
 
         gt_boxes = [x.gt_boxes for x in gt_instances]
         image_sizes = [x.image_size for x in gt_instances]
+        gt_occ_boxes = [x.gt_occ_boxes for x in gt_instances]
         del gt_instances
 
         gt_labels = []
         matched_gt_boxes = []
-        for image_size_i, gt_boxes_i in zip(image_sizes, gt_boxes):
+        gt_occ_labels = []
+        for image_size_i, gt_boxes_i, gt_occ_boxes_i in zip(image_sizes, gt_boxes, gt_occ_boxes):
             """
             image_size_i: (h, w) for the i-th image
             gt_boxes_i: ground-truth boxes for i-th image
@@ -360,14 +373,34 @@ class RPN(nn.Module):
 
             gt_labels.append(gt_labels_i)  # N,AHW
             matched_gt_boxes.append(matched_gt_boxes_i)
-        return gt_labels, matched_gt_boxes
+
+            # for occ labels
+            match_quality_matrix = retry_if_cuda_oom(pairwise_iou)(gt_occ_boxes_i, anchors)
+            matched_idxs, gt_occ_labels_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix)
+            # Matching is memory-expensive and may result in CPU tensors. But the result is small
+            gt_occ_labels_i = gt_occ_labels_i.to(device=gt_occ_labels_i.device)
+            del match_quality_matrix
+
+            if self.anchor_boundary_thresh >= 0:
+                # Discard anchors that go out of the boundaries of the image
+                # NOTE: This is legacy functionality that is turned off by default in Detectron2
+                anchors_inside_image = anchors.inside_box(image_size_i, self.anchor_boundary_thresh)
+                gt_occ_labels_i[~anchors_inside_image] = -1
+
+            # A vector of labels (-1, 0, 1) for each anchor
+            gt_occ_labels_i = self._subsample_labels(gt_occ_labels_i)
+            gt_occ_labels.append(gt_occ_labels_i)  # N,AHW
+            
+        return gt_labels, matched_gt_boxes, gt_occ_labels
 
     @torch.jit.unused
     def losses(
         self,
         anchors: List[Boxes],
         pred_objectness_logits: List[torch.Tensor],
+        pred_occlusioness_logits: List[torch.Tensor],
         gt_labels: List[torch.Tensor],
+        gt_occ_labels: List[torch.Tensor],
         pred_anchor_deltas: List[torch.Tensor],
         gt_boxes: List[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
@@ -380,7 +413,11 @@ class RPN(nn.Module):
             pred_objectness_logits (list[Tensor]): A list of L elements.
                 Element i is a tensor of shape (N, Hi*Wi*A) representing
                 the predicted objectness logits for all anchors.
+            pred_occlusioness_logits (list[Tensor]): A list of L elements.
+                Element i is a tensor of shape (N, Hi*Wi*A) representing
+                the predicted occlusioness for all anchors. #N 은 배치사이즈, HxW 마다 A개의 앵커
             gt_labels (list[Tensor]): Output of :meth:`label_and_sample_anchors`.
+            gt_occ_labels (list[Tensor]): Output of :meth:`label_and_sample_anchors`.
             pred_anchor_deltas (list[Tensor]): A list of L elements. Element i is a tensor of shape
                 (N, Hi*Wi*A, 4 or 5) representing the predicted "deltas" used to transform anchors
                 to proposals.
@@ -388,16 +425,18 @@ class RPN(nn.Module):
 
         Returns:
             dict[loss name -> loss value]: A dict mapping from loss name to loss value.
-                Loss names are: `loss_rpn_cls` for objectness classification and
-                `loss_rpn_loc` for proposal localization.
+                Loss names are: `loss_rpn_cls` for objectness classification,
+                `loss_rpn_loc` for proposal localization and
+                `loss_rpn_occ` for occlusioness classification.
         """
         num_images = len(gt_labels)
         gt_labels = torch.stack(gt_labels)  # (N, sum(Hi*Wi*Ai))
 
         # Log the number of positive/negative anchors per-image that's used in training
         pos_mask = gt_labels == 1
+        neg_mask = gt_labels == 0
         num_pos_anchors = pos_mask.sum().item()
-        num_neg_anchors = (gt_labels == 0).sum().item()
+        num_neg_anchors = neg_mask.sum().item()
         storage = get_event_storage()
         storage.put_scalar("rpn/num_pos_anchors", num_pos_anchors / num_images)
         storage.put_scalar("rpn/num_neg_anchors", num_neg_anchors / num_images)
@@ -418,12 +457,21 @@ class RPN(nn.Module):
             gt_labels[valid_mask].to(torch.float32),
             reduction="sum",
         )
+
+        valid_mask = gt_occ_labels >= 0
+        occlusion_loss = F.binary_cross_entropy_with_logits(
+            cat(pred_occlusioness_logits, dim=1)[valid_mask],
+            gt_occ_labels[valid_mask].to(torch.float32),
+            reduction="sum",
+        )
+
         normalizer = self.batch_size_per_image * num_images
         losses = {
             "loss_rpn_cls": objectness_loss / normalizer,
             # The original Faster R-CNN paper uses a slightly different normalizer
             # for loc loss. But it doesn't matter in practice
             "loss_rpn_loc": localization_loss / normalizer,
+            "loss_rpn_occ": occlusion_loss / normalizer,
         }
         losses = {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
         return losses
@@ -451,13 +499,14 @@ class RPN(nn.Module):
         features = [features[f] for f in self.in_features]
         anchors = self.anchor_generator(features)
 
-        pred_objectness_logits, pred_anchor_deltas = self.rpn_head(features)
+        pred_objectness_logits, pred_anchor_deltas, pred_occlusioness_logits = self.rpn_head(features) # -> StandardRPNHead.forward in c4
         # Transpose the Hi*Wi*A dimension to the middle:
         pred_objectness_logits = [
             # (N, A, Hi, Wi) -> (N, Hi, Wi, A) -> (N, Hi*Wi*A)
             score.permute(0, 2, 3, 1).flatten(1)
             for score in pred_objectness_logits
         ]
+
         pred_anchor_deltas = [
             # (N, A*B, Hi, Wi) -> (N, A, B, Hi, Wi) -> (N, Hi, Wi, A, B) -> (N, Hi*Wi*A, B)
             x.view(x.shape[0], -1, self.anchor_generator.box_dim, x.shape[-2], x.shape[-1])
@@ -465,17 +514,22 @@ class RPN(nn.Module):
             .flatten(1, -2)
             for x in pred_anchor_deltas
         ]
+        pred_occlusioness_logits = [
+            # (N, A, Hi, Wi) -> (N, Hi, Wi, A) -> (N, Hi*Wi*A)
+            score.permute(0, 2, 3, 1).flatten(1)
+            for score in pred_occlusioness_logits
+        ]
 
         if self.training:
             assert gt_instances is not None, "RPN requires gt_instances in training!"
-            gt_labels, gt_boxes = self.label_and_sample_anchors(anchors, gt_instances)
+            gt_labels, gt_boxes, gt_occ_labels = self.label_and_sample_anchors(anchors, gt_instances) # TODO:handhp1 gt_labels 역할을 할 gt_occlusion이 필요
             losses = self.losses(
-                anchors, pred_objectness_logits, gt_labels, pred_anchor_deltas, gt_boxes
+                anchors, pred_objectness_logits, pred_occlusioness_logits, gt_labels, gt_occ_labels, pred_anchor_deltas, gt_boxes
             )
         else:
             losses = {}
         proposals = self.predict_proposals(
-            anchors, pred_objectness_logits, pred_anchor_deltas, images.image_sizes
+            anchors, pred_objectness_logits, pred_anchor_deltas, pred_occlusioness_logits, images.image_sizes
         )
         return proposals, losses
 
@@ -484,6 +538,7 @@ class RPN(nn.Module):
         anchors: List[Boxes],
         pred_objectness_logits: List[torch.Tensor],
         pred_anchor_deltas: List[torch.Tensor],
+        pred_occlusioness_logits: List[torch.Tensor],
         image_sizes: List[Tuple[int, int]],
     ):
         """
@@ -503,6 +558,7 @@ class RPN(nn.Module):
             return find_top_rpn_proposals(
                 pred_proposals,
                 pred_objectness_logits,
+                pred_occlusioness_logits,
                 image_sizes,
                 self.nms_thresh,
                 self.pre_nms_topk[self.training],
@@ -522,7 +578,7 @@ class RPN(nn.Module):
         N = pred_anchor_deltas[0].shape[0]
         proposals = []
         # For each feature map
-        for anchors_i, pred_anchor_deltas_i in zip(anchors, pred_anchor_deltas):
+        for anchors_i, pred_anchor_deltas_i in zip(anchors, pred_anchor_deltas): # anchor 는 x y x y, delta는 x y w h
             B = anchors_i.tensor.size(1)
             pred_anchor_deltas_i = pred_anchor_deltas_i.reshape(-1, B)
             # Expand anchors to shape (N*Hi*Wi*A, B)

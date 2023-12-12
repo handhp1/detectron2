@@ -131,7 +131,7 @@ class DatasetMapper:
             if obj.get("iscrowd", 0) == 0
         ]
         instances = utils.annotations_to_instances(
-            annos, image_shape, mask_format=self.instance_mask_format
+            annos, image_shape, mask_format=self.instance_mask_format # 여기서 json annotation이 bbox로 바뀐다.
         )
 
         # After transforms such as cropping are applied, the bounding box may no longer
@@ -140,7 +140,11 @@ class DatasetMapper:
         # bounding box of the cropped triangle should be [(1,0),(2,1)], which is not equal to
         # the intersection of original bounding box and the cropping box.
         if self.recompute_boxes:
-            instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
+            instances.gt_boxes = instances.gt_masks.get_bounding_boxes() # 최종적으로 여기서 gt_boxes를 계산한 다음에 occ_boxes를 계산해야 한다
+        
+        # calculate intersections between boxes for occ_boxes
+        instances.gt_occ_boxes = utils.calc_occ_boxes(instances.gt_boxes) # occ_boxes 계산
+
         dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
     def __call__(self, dataset_dict):

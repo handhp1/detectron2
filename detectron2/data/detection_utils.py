@@ -21,8 +21,8 @@ from detectron2.structures import (
     PolygonMasks,
     RotatedBoxes,
     polygons_to_bitmask,
+    pairwise_intersection
 )
-from detectron2.utils.file_io import PathManager
 
 from . import transforms as T
 from .catalog import MetadataCatalog
@@ -453,6 +453,29 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
 
     return target
 
+def calc_occ_boxes(gt_boxes):
+    br_points = torch.min(gt_boxes[:, None, 2:], gt_boxes[:, 2:]) # N, N, 2
+    tl_points = torch.max(gt_boxes[:, None, :2], gt_boxes[:, :2]) # N, N, 2
+    intersections_wh = br_points - tl_points #  N, N, 2
+    box_count = intersections_wh.shape[0]
+
+    # self intersection 및 중복 제거
+    valid_mask = np.arange(box_count)[:,None,None] < np.arange(box_count)[None,:,None]
+
+    valid_intersections_wh = intersections_wh[valid_mask, :, None] # M, 2
+    valid_tl_points = tl_points[valid_mask, :, None] # M, 2
+    valid_br_points = br_points[valid_mask, :, None] # M, 2
+
+    # 교차 판정
+    intersected = np.where(torch.all(valid_intersections_wh > 0, axis = 1))
+    output = valid_intersections_wh[intersected] # m, 2
+
+    tl_points = valid_tl_points[intersected] # m, 2
+    br_points = valid_br_points[intersected] # m, 2
+
+    # x1, y1, x2, y2 형태로 concatenate
+    occ_boxes = torch.cat([tl_points,br_points], dim=1) # m, 4
+    return occ_boxes # torch tensor m, 4
 
 def annotations_to_instances_rotated(annos, image_size):
     """
@@ -473,7 +496,7 @@ def annotations_to_instances_rotated(annos, image_size):
     """
     boxes = [obj["bbox"] for obj in annos]
     target = Instances(image_size)
-    boxes = target.gt_boxes = RotatedBoxes(boxes)
+    boxes = target.gt_boxes = RotatedBoxes(boxes) # 여기는 rotated라 별도로 사용되지 않을듯
     boxes.clip(image_size)
 
     classes = [obj["category_id"] for obj in annos]

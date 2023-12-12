@@ -22,6 +22,7 @@ def _is_tracing():
 def find_top_rpn_proposals(
     proposals: List[torch.Tensor],
     pred_objectness_logits: List[torch.Tensor],
+    pred_occlusioness_logits: List[torch.Tensor],
     image_sizes: List[Tuple[int, int]],
     nms_thresh: float,
     pre_nms_topk: int,
@@ -38,6 +39,7 @@ def find_top_rpn_proposals(
         proposals (list[Tensor]): A list of L tensors. Tensor i has shape (N, Hi*Wi*A, 4).
             All proposal predictions on the feature maps.
         pred_objectness_logits (list[Tensor]): A list of L tensors. Tensor i has shape (N, Hi*Wi*A).
+        pred_oclusioness_logits (list[Tensor]): A list of L tensors. Tensor i has shape (N, Hi*Wi*A).
         image_sizes (list[tuple]): sizes (h, w) for each image
         nms_thresh (float): IoU threshold to use for NMS
         pre_nms_topk (int): number of top k scoring proposals to keep before applying NMS.
@@ -69,7 +71,9 @@ def find_top_rpn_proposals(
     topk_proposals = []
     level_ids = []  # #lvl Tensor, each of shape (topk,)
     batch_idx = move_device_like(torch.arange(num_images, device=device), proposals[0])
-    for level_id, (proposals_i, logits_i) in enumerate(zip(proposals, pred_objectness_logits)):
+    occlusioness_coeff = 0.5
+    pred_weighted_objectness_logits = pred_objectness_logits + pred_occlusioness_logits * occlusioness_coeff
+    for level_id, (proposals_i, logits_i) in enumerate(zip(proposals, pred_weighted_objectness_logits)):
         Hi_Wi_A = logits_i.shape[1]
         if isinstance(Hi_Wi_A, torch.Tensor):  # it's a tensor in tracing
             num_proposals_i = torch.clamp(Hi_Wi_A, max=pre_nms_topk)
