@@ -12,6 +12,7 @@ import pycocotools.mask as mask_util
 import torch
 from PIL import Image
 
+from detectron2.utils.file_io import PathManager
 from detectron2.structures import (
     BitMasks,
     Boxes,
@@ -26,6 +27,7 @@ from detectron2.structures import (
 
 from . import transforms as T
 from .catalog import MetadataCatalog
+
 
 __all__ = [
     "SizeMismatchError",
@@ -454,6 +456,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
     return target
 
 def calc_occ_boxes(gt_boxes):
+    gt_boxes=gt_boxes.tensor
     br_points = torch.min(gt_boxes[:, None, 2:], gt_boxes[:, 2:]) # N, N, 2
     tl_points = torch.max(gt_boxes[:, None, :2], gt_boxes[:, :2]) # N, N, 2
     intersections_wh = br_points - tl_points #  N, N, 2
@@ -475,7 +478,7 @@ def calc_occ_boxes(gt_boxes):
 
     # x1, y1, x2, y2 형태로 concatenate
     occ_boxes = torch.cat([tl_points,br_points], dim=1) # m, 4
-    return occ_boxes # torch tensor m, 4
+    return Boxes(occ_boxes) # torch tensor m, 4
 
 def annotations_to_instances_rotated(annos, image_size):
     """

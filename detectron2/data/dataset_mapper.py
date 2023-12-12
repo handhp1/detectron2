@@ -179,9 +179,8 @@ class DatasetMapper:
         elif 'val' in dataset_dict["file_name"]:
             gradcam_folder = 'datasets/coco/test_val2017_gradcam/'
          
-
         gradcam_file = dataset_dict["file_name"].split('/')[-1].split('.')[-2] + '.npy'
-        gradcam = np.load(gradcam_folder + gradcam_file)
+        gradcam = np.load(gradcam_folder + gradcam_file, allow_pickle=True)
 
         gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
         gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
