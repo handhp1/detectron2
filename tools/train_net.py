@@ -37,7 +37,8 @@ from detectron2.evaluation import (
     verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
-
+import glob
+import csv
 
 def build_evaluator(cfg, dataset_name, output_folder=None):
     """
@@ -127,7 +128,7 @@ def main(args):
     if args.eval_only:
         if os.path.isdir(cfg.MODEL.WEIGHTS) :
             print("path : ", cfg.MODEL.WEIGHTS)
-            model_files = glob.glob(cfg.MODEL.WEIGHTS + '*.pth')
+            model_files = sorted(glob.glob(cfg.MODEL.WEIGHTS + '*.pth'))
             print("model_files : ", model_files)
             f = open('write.csv','w', newline='')
             wr = csv.writer(f)
@@ -139,6 +140,7 @@ def main(args):
                 DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
                     model_files[i], resume=args.resume
                 )
+                print(model_files[i])
                 res = Trainer.test(cfg, model, writer=wr, model_file = model_files[i])
                 if cfg.TEST.AUG.ENABLED:
                     print("cfg.TEST.AUG.ENABLED:")
