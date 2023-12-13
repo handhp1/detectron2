@@ -183,14 +183,14 @@ class DatasetMapper:
          
         gradcam_file = dataset_dict["file_name"].split('/')[-1].split('.')[-2] + '.npy'
         #print(gradcam_folder + gradcam_file)
-        #import pickle
+        import pickle
 
         #with open(gradcam_folder + gradcam_file, 'rb') as file:
         #    gradcam = pickle.load(file)
-        #gradcam = np.load(gradcam_folder + gradcam_file, allow_pickle=True)
+        gradcam = np.load(gradcam_folder + gradcam_file, allow_pickle=True)
 
-        #gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
-        #gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
+        gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
+        gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
 
         dataset_dict["gradcam"] = []#gradcam
         dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
