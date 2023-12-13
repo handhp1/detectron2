@@ -315,12 +315,14 @@ class FastRCNNOutputLayers(nn.Module):
         Returns:
             Dict[str, Tensor]: dict of losses
         """
+
         scores, proposal_deltas = predictions
 
         # parse classification outputs
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
+
         _log_classification_stats(scores, gt_classes)
 
         # parse box regression outputs

@@ -538,6 +538,7 @@ def filter_empty_instances(
     if not r:
         return instances
     m = r[0]
+
     for x in r[1:]:
         m = m & x
     if return_mask:

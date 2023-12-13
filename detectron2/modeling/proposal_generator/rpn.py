@@ -343,6 +343,7 @@ class RPN(nn.Module):
         gt_labels = []
         matched_gt_boxes = []
         gt_occ_labels = []
+
         for image_size_i, gt_boxes_i, gt_occ_boxes_i in zip(image_sizes, gt_boxes, gt_occ_boxes):
             """
             image_size_i: (h, w) for the i-th image
@@ -431,6 +432,7 @@ class RPN(nn.Module):
         """
         num_images = len(gt_labels)
         gt_labels = torch.stack(gt_labels)  # (N, sum(Hi*Wi*Ai))
+        gt_occ_labels = torch.stack(gt_occ_labels)
 
         # Log the number of positive/negative anchors per-image that's used in training
         pos_mask = gt_labels == 1

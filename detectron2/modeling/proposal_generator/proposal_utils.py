@@ -71,8 +71,10 @@ def find_top_rpn_proposals(
     topk_proposals = []
     level_ids = []  # #lvl Tensor, each of shape (topk,)
     batch_idx = move_device_like(torch.arange(num_images, device=device), proposals[0])
-    occlusioness_coeff = 0.5
-    pred_weighted_objectness_logits = pred_objectness_logits + pred_occlusioness_logits * occlusioness_coeff
+    occlusioness_coeff = 0.5 # modify this weight to consider occ boxes
+    pred_weighted_objectness_logits = pred_objectness_logits[:]
+    for i in range(len(pred_weighted_objectness_logits)):
+        pred_weighted_objectness_logits[i] = pred_weighted_objectness_logits[i] + pred_occlusioness_logits[i] * occlusioness_coeff
     for level_id, (proposals_i, logits_i) in enumerate(zip(proposals, pred_weighted_objectness_logits)):
         Hi_Wi_A = logits_i.shape[1]
         if isinstance(Hi_Wi_A, torch.Tensor):  # it's a tensor in tracing

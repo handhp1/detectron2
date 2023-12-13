@@ -143,7 +143,9 @@ class DatasetMapper:
             instances.gt_boxes = instances.gt_masks.get_bounding_boxes() # 최종적으로 여기서 gt_boxes를 계산한 다음에 occ_boxes를 계산해야 한다
         
         # calculate intersections between boxes for occ_boxes
-        instances.gt_occ_boxes = utils.calc_occ_boxes(instances.gt_boxes) # occ_boxes 계산
+        gt_occ_boxes = utils.calc_occ_boxes(instances.gt_boxes) # occ_boxes 계산
+        
+        instances.gt_occ_boxes = gt_occ_boxes
 
         dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
@@ -180,12 +182,17 @@ class DatasetMapper:
             gradcam_folder = 'datasets/coco/test_val2017_gradcam/'
          
         gradcam_file = dataset_dict["file_name"].split('/')[-1].split('.')[-2] + '.npy'
-        gradcam = np.load(gradcam_folder + gradcam_file, allow_pickle=True)
+        #print(gradcam_folder + gradcam_file)
+        #import pickle
 
-        gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
-        gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
+        #with open(gradcam_folder + gradcam_file, 'rb') as file:
+        #    gradcam = pickle.load(file)
+        #gradcam = np.load(gradcam_folder + gradcam_file, allow_pickle=True)
 
-        dataset_dict["gradcam"] = gradcam
+        #gradcam = resize(gradcam, (image.shape[0], image.shape[1]))
+        #gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0)
+
+        dataset_dict["gradcam"] = []#gradcam
         dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
         
         if sem_seg_gt is not None:

@@ -74,10 +74,10 @@ class Instances:
         """
         with warnings.catch_warnings(record=True):
             data_len = len(value)
-        if len(self._fields):
-            assert (
-                len(self) == data_len
-            ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
+        #if len(self._fields): # gt_occ_boxes는 꼭 gt_boxes 크기와 일치하지 않는다.
+            #assert (
+            #    len(self) == data_len
+            #), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
         self._fields[name] = value
 
     def has(self, name: str) -> bool:
@@ -137,7 +137,12 @@ class Instances:
                 item = slice(item, None, len(self))
 
         ret = Instances(self._image_size)
+
         for k, v in self._fields.items():
+            if(k.startswith("gt_occ_boxes")): # occ boxes에는 불필요한 처리
+                ret.set(k, v)
+                continue
+
             ret.set(k, v[item])
         return ret
 

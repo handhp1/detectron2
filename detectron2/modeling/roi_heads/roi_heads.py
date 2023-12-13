@@ -284,7 +284,11 @@ class ROIHeads(torch.nn.Module):
                 # (by foreground/background, or number of keypoints in the image, etc)
                 # so we essentially index the data twice.
                 for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                    # gt_occ_boxes에 대해서는 불필요한 처리
                     if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
+                        if trg_name.startswith("gt_occ_boxes"): # for occ boxes
+                            proposals_per_image.set(trg_name, trg_value)
+                            continue
                         proposals_per_image.set(trg_name, trg_value[sampled_targets])
             # If no GT is given in the image, we don't know what a dummy gt value can be.
             # Therefore the returned proposals won't have any gt_* fields, except for a
@@ -795,13 +799,15 @@ class StandardROIHeads(ROIHeads):
             In inference, a list of `Instances`, the predicted instances.
         """
         features = [features[f] for f in self.box_in_features]
+
         box_features = self.box_pooler(features, [x.proposal_boxes for x in proposals])
         box_features = self.box_head(box_features)
         predictions = self.box_predictor(box_features)
+
         del box_features
 
         if self.training:
-            losses = self.box_predictor.losses(predictions, proposals)
+            losses = self.box_predictor.losses(predictions, proposals) 
             # proposals is modified in-place below, so losses must be computed first.
             if self.train_on_pred_boxes:
                 with torch.no_grad():
