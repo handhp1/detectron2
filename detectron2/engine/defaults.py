@@ -43,6 +43,7 @@ from detectron2.utils.env import seed_all_rng
 from detectron2.utils.events import CommonMetricPrinter, JSONWriter, TensorboardXWriter
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
+from skimage.transform import resize
 
 from . import hooks
 from .train_loop import AMPTrainer, SimpleTrainer, TrainerBase
@@ -294,7 +295,7 @@ class DefaultPredictor:
         self.input_format = cfg.INPUT.FORMAT
         assert self.input_format in ["RGB", "BGR"], self.input_format
 
-    def __call__(self, original_image):
+    def __call__(self, original_image, gradcam = None):
         """
         Args:
             original_image (np.ndarray): an image of shape (H, W, C) (in BGR order).
@@ -314,8 +315,16 @@ class DefaultPredictor:
             image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
             image.to(self.cfg.MODEL.DEVICE)
 
-            inputs = {"image": image, "height": height, "width": width}
+          
+            if gradcam is not None : 
+                print("gradcam is not none")
+                gradcam = resize(gradcam, (image.shape[1], image.shape[2]))
+                gradcam = torch.as_tensor(gradcam).unsqueeze(dim=0).to(self.cfg.MODEL.DEVICE)
+                #image = image * gradcam
 
+                inputs = {"image": image, "height": height, "width": width}
+            else :
+                inputs = {"image": image, "height": height, "width": width}
             predictions = self.model([inputs])[0]
             return predictions
 
@@ -368,6 +377,7 @@ class DefaultTrainer(TrainerBase):
         Args:
             cfg (CfgNode):
         """
+        print("aaaaaaaaaa DefaultTrainer init")
         super().__init__()
         logger = logging.getLogger("detectron2")
         if not logger.isEnabledFor(logging.INFO):  # setup_logger is not called for d2
@@ -383,6 +393,7 @@ class DefaultTrainer(TrainerBase):
         self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
             model, data_loader, optimizer
         )
+        print("aaaaaaaaaa self._trainer : ", self._trainer)
 
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         self.checkpointer = DetectionCheckpointer(
@@ -483,6 +494,7 @@ class DefaultTrainer(TrainerBase):
         Returns:
             OrderedDict of results, if evaluation is enabled. Otherwise None.
         """
+        print("aaaaaaaaaa DefaultTrainer train")
         super().train(self.start_iter, self.max_iter)
         if len(self.cfg.TEST.EXPECTED_RESULTS) and comm.is_main_process():
             assert hasattr(
@@ -515,7 +527,7 @@ class DefaultTrainer(TrainerBase):
         """
         model = build_model(cfg)
         logger = logging.getLogger(__name__)
-        logger.info("Model:\n{}".format(model))
+        #logger.info("Model:\n{}".format(model))
         return model
 
     @classmethod
@@ -576,7 +588,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         )
 
     @classmethod
-    def test(cls, cfg, model, evaluators=None):
+    def test(cls, cfg, model, evaluators=None, writer = None, model_file = None):
         """
         Evaluate the given model. The given model is expected to already contain
         weights to evaluate.
@@ -629,6 +641,11 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
 
         if len(results) == 1:
             results = list(results.values())[0]
+        
+        if writer is not None :
+            #print("eeeeeeeeeeeee : ", results['bbox'])
+            row = [model_file, results['bbox']['AP'], results['bbox']['AP50'],results['bbox']['AP75'],results['bbox']['APs'], results['bbox']['APm'],results['bbox']['APl']]
+            writer.writerow(row)
         return results
 
     @staticmethod
